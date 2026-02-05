@@ -1,50 +1,142 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+<!--
+SYNC IMPACT REPORT
+==================
+Version change: N/A (template) → 1.0.0 (initial)
+Modified principles: N/A (first instantiation)
+Added sections:
+  - 5 Core Principles (Performance, Memory Safety, Concurrency, Zero-Copy, Benchmarking)
+  - Performance Standards
+  - Development Workflow
+  - Governance
+Removed sections: N/A
+Templates requiring updates:
+  - .specify/templates/plan-template.md ✅ (Constitution Check section compatible)
+  - .specify/templates/spec-template.md ✅ (no changes needed)
+  - .specify/templates/tasks-template.md ✅ (no changes needed)
+Follow-up TODOs: None
+-->
+
+# Magento 2 Static Deploy Rust Constitution
+
+High-performance static content deployment tool for Magento 2, written in Rust.
+Target: Match or exceed 230-380x speedup over PHP baseline achieved by Go implementation.
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Performance First
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+All code MUST prioritize performance. Every design decision MUST consider throughput,
+latency, memory usage, and CPU utilization impact.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+**Non-negotiables**:
+- Throughput target: 50k+ operations/second
+- Latency p99: < 5ms per file operation
+- Memory peak: < 256MB regardless of dataset size
+- CPU utilization: 90%+ on available cores
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+**Rationale**: This tool exists solely to provide extreme performance gains over PHP.
+Performance regressions are defects.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### II. Memory Safety Without Compromise
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+All code MUST follow Rust's ownership model correctly. Production code MUST NOT panic.
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+**Non-negotiables**:
+- MUST propagate errors with context using `?` and `.context()`
+- MUST NOT use `.unwrap()` or `.expect()` in production code paths
+- MUST pre-allocate collections with `with_capacity()` when size is known
+- MUST prefer borrowing (`&T`, `&mut T`) over ownership transfer
+- MUST document all `unsafe` blocks with `// SAFETY:` comments explaining invariants
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+**Rationale**: Panics in production break deployments. Memory safety is Rust's core value.
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+### III. Concurrency Excellence
+
+All concurrent code MUST use appropriate patterns for the workload type.
+
+**Non-negotiables**:
+- MUST use Rayon for CPU-bound parallel work (file processing, transformations)
+- MUST use Tokio for I/O-bound async work (if network operations needed)
+- MUST use atomics (`AtomicU64`, etc.) for progress tracking, not mutexes
+- MUST NOT use `Arc<Mutex<T>>` when channels or atomics suffice
+- MUST NOT block async runtime with synchronous operations
+
+**Rationale**: Wrong concurrency patterns cause deadlocks, poor utilization, or hidden bottlenecks.
+
+### IV. Zero-Copy Optimization
+
+Hot paths MUST minimize allocations and copies.
+
+**Non-negotiables**:
+- MUST use `&str` over `String`, `&[T]` over `Vec<T>` when ownership not required
+- MUST use memory-mapped files (`memmap2`) for large file reads
+- MUST pool and reuse buffers in hot loops
+- MUST NOT allocate inside hot loops (no `format!()`, `String::new()`, `vec![]`)
+- SHOULD use `SmallVec<[T; N]>` for small, stack-allocatable collections
+- SHOULD intern repeated strings with `Arc<str>` + `DashMap`
+
+**Rationale**: Allocations are the primary performance killer in high-throughput file processing.
+
+### V. Benchmarking Discipline
+
+All performance-critical changes MUST be measured before and after.
+
+**Non-negotiables**:
+- MUST run `cargo bench` baseline before optimization work
+- MUST run `cargo bench` comparison after changes
+- MUST justify any regression > 5% or reject the change
+- MUST include benchmark results in commit messages for performance changes
+- SHOULD profile with flamegraph before and after optimization
+
+**Rationale**: Unmeasured optimizations are guesses. Regressions compound silently.
+
+## Performance Standards
+
+| Metric | Target | Tool |
+|--------|--------|------|
+| Throughput | 50k ops/sec | `cargo bench` |
+| Latency p99 | < 5ms | Histogram metrics |
+| Memory peak | < 256MB | `heaptrack` |
+| CPU utilization | 90%+ | `perf stat` |
+
+Build profile for release:
+```toml
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+```
+
+## Development Workflow
+
+- MUST create a plan before code changes and get approval before implementation
+- MUST keep plans minimal; avoid complex changes unless explicitly requested
+- MUST work task-by-task with proper status updates
+- MUST run `cargo clippy -- -D warnings` and `cargo fmt` after each change
+- MUST profile before and after optimization work
+- MUST document performance tradeoffs in commit messages
+- MUST ask for clarification before implementing unclear requirements
+- MUST NOT create tests unless explicitly requested
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+This constitution is the authoritative source for project standards. All code reviews
+MUST verify compliance with these principles.
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+**Amendment Process**:
+1. Propose change with rationale
+2. Document impact on existing code
+3. Update version according to semver:
+   - MAJOR: Principle removal or incompatible redefinition
+   - MINOR: New principle or material expansion
+   - PATCH: Clarification or wording fix
+4. Update dependent templates if principle names change
+
+**Compliance**:
+- All PRs MUST pass Constitution Check in plan-template.md
+- Violations MUST be justified in Complexity Tracking table
+- See `CLAUDE.md` for runtime development guidance
+
+**Version**: 1.0.0 | **Ratified**: 2025-02-05 | **Last Amended**: 2025-02-05

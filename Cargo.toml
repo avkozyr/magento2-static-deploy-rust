@@ -1,0 +1,58 @@
+[package]
+name = "magento-static-deploy"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "High-performance static content deployment for Magento 2"
+license = "MIT"
+
+[lib]
+name = "magento_static_deploy"
+path = "src/lib.rs"
+
+[[bin]]
+name = "magento-static-deploy"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+rayon = "1.10"
+walkdir = "2"
+quick-xml = "0.31"
+memmap2 = "0.9"
+anyhow = "1"
+thiserror = "2"
+ctrlc = "3"
+num_cpus = "1"
+indicatif = "0.17"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3"
+
+[[bench]]
+name = "deploy_benchmark"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.bench]
+inherits = "release"
+debug = true
+
+[lints.clippy]
+# Stricter lints for production quality
+unwrap_used = "deny"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "deny"
+dbg_macro = "deny"
+# Allow print macros for CLI output
+# print_stdout = "warn"
+# print_stderr = "warn"

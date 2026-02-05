@@ -1,0 +1,33 @@
+# Rust build artifacts
+/target/
+/dist/
+debug/
+*.pdb
+
+# Cross-compiled binaries (in project root)
+magento-static-deploy-linux-*
+magento-static-deploy-darwin-*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Keep these
+!/.gitignore
+!/README.md
+!/.claude
+!/.specify
+!/dev
+!CLAUDE.md
+!/specs
+!/src
+!/Cargo.toml
+!/Cargo.lock
+!/build-all.sh

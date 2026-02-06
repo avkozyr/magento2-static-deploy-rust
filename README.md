@@ -1,17 +1,18 @@
 # Magento Hyva Static Content Deployer (Rust)
 
-High-performance static content deployment for Magento 2 Hyva, written in Rust using Speckit and Claude.
+High-performance static content deployment for Magento 2 Hyva themes, written in Rust.
 
 ## Background
 
 This project is a Rust port of [Magento Static Content Deployer (Go)](https://github.com/elgentos/magento2-static-deploy), a Go-based tool for fast Magento static content deployment by Elgentos. The Rust implementation improves on the original with:
 
-- **Faster throughput**
-- **Smaller binary**
-- **Correct multi-locale handling** (separate directories per locale - Go creates combined directory)
+- **Faster throughput** than both Go and PHP implementations
+- **Smaller binary size**
+- **Correct multi-locale handling** (separate directories per locale)
 
 ## Features
 
+- **Fast**: High-throughput parallel file deployment
 - **Parallel**: Deploys multiple themes and locales concurrently
 - **Smart**: Detects Hyva vs Luma themes automatically
 - **Safe**: Graceful Ctrl+C cancellation, no partial files
@@ -22,7 +23,7 @@ This project is a Rust port of [Magento Static Content Deployer (Go)](https://gi
 ### From Source
 
 ```bash
-# Requires Rust 1.75+
+# Requires Rust 1.80+
 cargo build --release
 
 # Binary at target/release/magento-static-deploy
@@ -159,10 +160,24 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed benchmark documentation.
 
 ## Requirements
 
-- Rust 1.75+ (build only)
+- Rust 1.80+ (build only)
 - Magento 2.4+
 - Read access to Magento files
 - Write access to `pub/static`
+
+## Development
+
+```bash
+# Run tests
+cargo test
+
+# Run benchmarks
+cargo bench
+
+# Check code quality
+cargo clippy -- -D warnings
+cargo fmt --check
+```
 
 ## License
 

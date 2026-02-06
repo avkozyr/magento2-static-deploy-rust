@@ -5,6 +5,13 @@
 **Status**: Draft
 **Input**: Rust expert review identifying 12 high-impact optimizations for the Magento 2 static deploy tool
 
+## Clarifications
+
+### Session 2026-02-05
+
+- Q: Is 100% test coverage a hard requirement or aspirational target? → A: Aspirational; 80%+ acceptable with documented exclusions for impractical paths
+- Q: What is the performance baseline for the 25% improvement target? → A: Use Criterion benchmarks from benches/ directory
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Faster Deployments (Priority: P1)
@@ -83,7 +90,7 @@ As a maintainer of the tool, I want the codebase to follow Rust best practices a
 - **FR-010**: System MUST validate locale code format when accepting user input
 - **FR-011**: File copy operations MUST use an appropriate buffer size for modern storage devices
 - **FR-012**: Public APIs MUST include documentation comments explaining purpose and usage
-- **FR-013**: All modules MUST have comprehensive unit tests achieving 100% code coverage
+- **FR-013**: All modules MUST have comprehensive unit tests achieving 80%+ code coverage (100% aspirational; exclusions documented for impractical paths)
 
 ### Key Entities
 
@@ -96,20 +103,20 @@ As a maintainer of the tool, I want the codebase to follow Rust best practices a
 
 ### Measurable Outcomes
 
-- **SC-001**: Deployment of 10,000 files completes at least 25% faster than the pre-optimization baseline
+- **SC-001**: Deployment of 10,000 files completes at least 25% faster than the pre-optimization baseline (measured via Criterion benchmarks in benches/)
 - **SC-002**: Memory allocations during deployment are reduced by at least 20% for typical workloads
 - **SC-003**: All error messages for file operations include both source and destination paths
 - **SC-004**: All public types and functions have documentation comments (100% coverage for public API)
 - **SC-005**: No new Clippy warnings are introduced with existing strict lint configuration
 - **SC-006**: Invalid locale codes are rejected with a clear error message before deployment begins
-- **SC-007**: Test coverage reaches 100% for all modules (measured by cargo-tarpaulin or llvm-cov)
+- **SC-007**: Test coverage reaches 80%+ for all modules with 100% aspirational (measured by cargo-tarpaulin or llvm-cov; exclusions documented)
 
 ## Assumptions
 
 - The existing Rayon-based parallelism architecture is sound and should be preserved
 - Buffer size tuning applies to typical Magento static content (CSS, JS, images) with average file sizes under 1MB
 - Locale validation follows the standard "xx_YY" format used by Magento (e.g., en_US, nl_NL, de_DE)
-- Performance measurements will use consistent hardware and Magento installation for before/after comparison
+- Performance measurements will use Criterion benchmarks (benches/) for reproducible before/after comparison
 - The 12 identified optimizations from the Rust expert review are technically accurate and applicable
 
 ## Out of Scope

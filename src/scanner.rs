@@ -1,3 +1,8 @@
+//! Theme and module scanning for Magento 2 installations.
+//!
+//! Discovers themes in `app/design/` and modules in `vendor/` using
+//! parallel iteration with Rayon for improved performance.
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -195,7 +200,8 @@ pub fn scan_vendor_module_sources(magento_root: &Path, area: Area) -> Vec<FileSo
                         return Vec::new();
                     };
 
-                    let mut sources = Vec::new();
+                    // Pre-allocate for typical module sources (1-4 paths)
+                    let mut sources = Vec::with_capacity(4);
 
                     // Check standard path: view/{area}/web
                     let web_path = package_path.join("view").join(area.as_str()).join("web");
@@ -250,7 +256,8 @@ pub fn scan_vendor_module_sources(magento_root: &Path, area: Area) -> Vec<FileSo
 
 /// Scan theme module overrides in app/design/{area}/{Vendor}/{theme}/{Module_Name}/web/
 pub fn scan_theme_module_overrides(theme: &Theme) -> Vec<FileSource> {
-    let mut sources = Vec::new();
+    // Pre-allocate for typical theme overrides (5-10 modules)
+    let mut sources = Vec::with_capacity(8);
 
     for entry in WalkDir::new(&theme.path)
         .min_depth(1)
@@ -288,7 +295,8 @@ pub fn collect_file_sources(
     parent_chain: &[&Theme],
     magento_root: &Path,
 ) -> Vec<FileSource> {
-    let mut sources = Vec::new();
+    // Pre-allocate for typical source count (50-200 sources)
+    let mut sources = Vec::with_capacity(100);
 
     // Priority order (highest first):
     // 1. Theme module overrides (current theme)
@@ -310,4 +318,601 @@ pub fn collect_file_sources(
     sources.extend(scan_library_sources(magento_root));
 
     sources
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::{ThemeCode, ThemeType};
+    use std::fs;
+    use tempfile::TempDir;
+
+    // ==================== parse_module_xml tests ====================
+
+    #[test]
+    fn test_parse_module_xml_valid() {
+        let xml = r#"<?xml version="1.0"?>
+<config>
+    <module name="Vendor_ModuleName" setup_version="1.0.0"/>
+</config>"#;
+
+        let result = parse_module_xml(xml);
+        assert_eq!(result, Some("Vendor_ModuleName".to_string()));
+    }
+
+    #[test]
+    fn test_parse_module_xml_start_tag() {
+        let xml = r#"<?xml version="1.0"?>
+<config>
+    <module name="Test_Module">
+        <sequence/>
+    </module>
+</config>"#;
+
+        let result = parse_module_xml(xml);
+        assert_eq!(result, Some("Test_Module".to_string()));
+    }
+
+    #[test]
+    fn test_parse_module_xml_no_module() {
+        let xml = r#"<?xml version="1.0"?>
+<config></config>"#;
+
+        let result = parse_module_xml(xml);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_module_xml_no_name_attribute() {
+        let xml = r#"<?xml version="1.0"?>
+<config>
+    <module version="1.0.0"/>
+</config>"#;
+
+        let result = parse_module_xml(xml);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_module_xml_malformed() {
+        let xml = "not valid xml <<<<";
+        let result = parse_module_xml(xml);
+        assert_eq!(result, None);
+    }
+
+    // ==================== get_module_name tests ====================
+
+    #[test]
+    fn test_get_module_name_standard_path() {
+        let temp = TempDir::new().unwrap();
+        let etc_path = temp.path().join("etc");
+        fs::create_dir_all(&etc_path).unwrap();
+
+        fs::write(
+            etc_path.join("module.xml"),
+            r#"<?xml version="1.0"?>
+<config><module name="Test_StandardPath"/></config>"#,
+        )
+        .unwrap();
+
+        let result = get_module_name(temp.path());
+        assert_eq!(result, Some("Test_StandardPath".to_string()));
+    }
+
+    #[test]
+    fn test_get_module_name_src_path() {
+        let temp = TempDir::new().unwrap();
+        let src_etc = temp.path().join("src").join("etc");
+        fs::create_dir_all(&src_etc).unwrap();
+
+        fs::write(
+            src_etc.join("module.xml"),
+            r#"<?xml version="1.0"?>
+<config><module name="Test_SrcPath"/></config>"#,
+        )
+        .unwrap();
+
+        let result = get_module_name(temp.path());
+        assert_eq!(result, Some("Test_SrcPath".to_string()));
+    }
+
+    #[test]
+    fn test_get_module_name_no_module_xml() {
+        let temp = TempDir::new().unwrap();
+        let result = get_module_name(temp.path());
+        assert_eq!(result, None);
+    }
+
+    // ==================== discover_themes tests ====================
+
+    #[test]
+    fn test_discover_themes_nonexistent_path() {
+        let temp = TempDir::new().unwrap();
+        let result = discover_themes(temp.path(), Area::Frontend).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_discover_themes_single_theme() {
+        let temp = TempDir::new().unwrap();
+        let theme_path = temp
+            .path()
+            .join("app")
+            .join("design")
+            .join("frontend")
+            .join("TestVendor")
+            .join("testtheme");
+        fs::create_dir_all(&theme_path).unwrap();
+
+        fs::write(
+            theme_path.join("theme.xml"),
+            r#"<?xml version="1.0"?>
+<theme><title>Test Theme</title></theme>"#,
+        )
+        .unwrap();
+
+        let result = discover_themes(temp.path(), Area::Frontend).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].vendor, "TestVendor");
+        assert_eq!(result[0].name, "testtheme");
+        assert_eq!(result[0].area, Area::Frontend);
+    }
+
+    #[test]
+    fn test_discover_themes_multiple_themes() {
+        let temp = TempDir::new().unwrap();
+        let base = temp.path().join("app").join("design").join("frontend");
+
+        // Create two themes in same vendor
+        let theme1 = base.join("Vendor").join("theme1");
+        let theme2 = base.join("Vendor").join("theme2");
+        fs::create_dir_all(&theme1).unwrap();
+        fs::create_dir_all(&theme2).unwrap();
+
+        fs::write(
+            theme1.join("theme.xml"),
+            r#"<theme><title>T1</title></theme>"#,
+        )
+        .unwrap();
+        fs::write(
+            theme2.join("theme.xml"),
+            r#"<theme><title>T2</title></theme>"#,
+        )
+        .unwrap();
+
+        let result = discover_themes(temp.path(), Area::Frontend).unwrap();
+
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_discover_themes_with_parent() {
+        let temp = TempDir::new().unwrap();
+        let theme_path = temp
+            .path()
+            .join("app")
+            .join("design")
+            .join("frontend")
+            .join("Child")
+            .join("theme");
+        fs::create_dir_all(&theme_path).unwrap();
+
+        fs::write(
+            theme_path.join("theme.xml"),
+            r#"<?xml version="1.0"?>
+<theme>
+    <title>Child Theme</title>
+    <parent>Hyva/default</parent>
+</theme>"#,
+        )
+        .unwrap();
+
+        let result = discover_themes(temp.path(), Area::Frontend).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].parent, Some(ThemeCode::from("Hyva/default")));
+    }
+
+    #[test]
+    fn test_discover_themes_skips_dirs_without_theme_xml() {
+        let temp = TempDir::new().unwrap();
+        let base = temp
+            .path()
+            .join("app")
+            .join("design")
+            .join("frontend")
+            .join("Vendor");
+
+        // Directory with theme.xml
+        let with_xml = base.join("valid");
+        fs::create_dir_all(&with_xml).unwrap();
+        fs::write(
+            with_xml.join("theme.xml"),
+            r#"<theme><title>V</title></theme>"#,
+        )
+        .unwrap();
+
+        // Directory without theme.xml
+        let without_xml = base.join("invalid");
+        fs::create_dir_all(&without_xml).unwrap();
+
+        let result = discover_themes(temp.path(), Area::Frontend).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "valid");
+    }
+
+    #[test]
+    fn test_discover_themes_adminhtml_area() {
+        let temp = TempDir::new().unwrap();
+        let theme_path = temp
+            .path()
+            .join("app")
+            .join("design")
+            .join("adminhtml")
+            .join("Admin")
+            .join("theme");
+        fs::create_dir_all(&theme_path).unwrap();
+
+        fs::write(
+            theme_path.join("theme.xml"),
+            r#"<theme><title>A</title></theme>"#,
+        )
+        .unwrap();
+
+        let result = discover_themes(temp.path(), Area::Adminhtml).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].area, Area::Adminhtml);
+    }
+
+    // ==================== scan_theme_web_sources tests ====================
+
+    #[test]
+    fn test_scan_theme_web_sources_exists() {
+        let temp = TempDir::new().unwrap();
+        let theme_path = temp.path().join("theme");
+        let web_path = theme_path.join("web");
+        fs::create_dir_all(&web_path).unwrap();
+
+        let theme = Theme {
+            vendor: "Test".to_string(),
+            name: "theme".to_string(),
+            area: Area::Frontend,
+            path: theme_path,
+            parent: None,
+            theme_type: ThemeType::Hyva,
+        };
+
+        let sources = scan_theme_web_sources(&theme);
+
+        assert_eq!(sources.len(), 1);
+        match &sources[0] {
+            FileSource::ThemeWeb { theme, path } => {
+                assert_eq!(theme, "Test/theme");
+                assert_eq!(path, &web_path);
+            }
+            _ => panic!("Expected ThemeWeb source"),
+        }
+    }
+
+    #[test]
+    fn test_scan_theme_web_sources_not_exists() {
+        let temp = TempDir::new().unwrap();
+        let theme_path = temp.path().join("theme");
+        fs::create_dir_all(&theme_path).unwrap();
+
+        let theme = Theme {
+            vendor: "Test".to_string(),
+            name: "theme".to_string(),
+            area: Area::Frontend,
+            path: theme_path,
+            parent: None,
+            theme_type: ThemeType::Hyva,
+        };
+
+        let sources = scan_theme_web_sources(&theme);
+        assert!(sources.is_empty());
+    }
+
+    // ==================== scan_library_sources tests ====================
+
+    #[test]
+    fn test_scan_library_sources_exists() {
+        let temp = TempDir::new().unwrap();
+        let lib_web = temp.path().join("lib").join("web");
+        fs::create_dir_all(&lib_web).unwrap();
+
+        let sources = scan_library_sources(temp.path());
+
+        assert_eq!(sources.len(), 1);
+        match &sources[0] {
+            FileSource::Library { path } => {
+                assert_eq!(path, &lib_web);
+            }
+            _ => panic!("Expected Library source"),
+        }
+    }
+
+    #[test]
+    fn test_scan_library_sources_not_exists() {
+        let temp = TempDir::new().unwrap();
+        let sources = scan_library_sources(temp.path());
+        assert!(sources.is_empty());
+    }
+
+    // ==================== scan_vendor_module_sources tests ====================
+
+    #[test]
+    fn test_scan_vendor_module_sources_no_vendor() {
+        let temp = TempDir::new().unwrap();
+        let sources = scan_vendor_module_sources(temp.path(), Area::Frontend);
+        assert!(sources.is_empty());
+    }
+
+    #[test]
+    fn test_scan_vendor_module_sources_standard_path() {
+        let temp = TempDir::new().unwrap();
+        let module_path = temp
+            .path()
+            .join("vendor")
+            .join("vendorname")
+            .join("module-name");
+        let web_path = module_path.join("view").join("frontend").join("web");
+        let etc_path = module_path.join("etc");
+        fs::create_dir_all(&web_path).unwrap();
+        fs::create_dir_all(&etc_path).unwrap();
+
+        fs::write(
+            etc_path.join("module.xml"),
+            r#"<config><module name="Vendor_Module"/></config>"#,
+        )
+        .unwrap();
+
+        let sources = scan_vendor_module_sources(temp.path(), Area::Frontend);
+
+        assert_eq!(sources.len(), 1);
+        match &sources[0] {
+            FileSource::VendorModule { module, path } => {
+                assert_eq!(module, "Vendor_Module");
+                assert_eq!(path, &web_path);
+            }
+            _ => panic!("Expected VendorModule source"),
+        }
+    }
+
+    #[test]
+    fn test_scan_vendor_module_sources_base_area() {
+        let temp = TempDir::new().unwrap();
+        let module_path = temp
+            .path()
+            .join("vendor")
+            .join("vendorname")
+            .join("module-name");
+        let base_web_path = module_path.join("view").join("base").join("web");
+        let etc_path = module_path.join("etc");
+        fs::create_dir_all(&base_web_path).unwrap();
+        fs::create_dir_all(&etc_path).unwrap();
+
+        fs::write(
+            etc_path.join("module.xml"),
+            r#"<config><module name="Vendor_BaseModule"/></config>"#,
+        )
+        .unwrap();
+
+        let sources = scan_vendor_module_sources(temp.path(), Area::Frontend);
+
+        assert_eq!(sources.len(), 1);
+        match &sources[0] {
+            FileSource::VendorModule { module, .. } => {
+                assert_eq!(module, "Vendor_BaseModule");
+            }
+            _ => panic!("Expected VendorModule source"),
+        }
+    }
+
+    #[test]
+    fn test_scan_vendor_module_sources_hyva_style() {
+        let temp = TempDir::new().unwrap();
+        let module_path = temp.path().join("vendor").join("hyva").join("module-name");
+        let web_path = module_path
+            .join("src")
+            .join("view")
+            .join("frontend")
+            .join("web");
+        let etc_path = module_path.join("src").join("etc");
+        fs::create_dir_all(&web_path).unwrap();
+        fs::create_dir_all(&etc_path).unwrap();
+
+        fs::write(
+            etc_path.join("module.xml"),
+            r#"<config><module name="Hyva_Module"/></config>"#,
+        )
+        .unwrap();
+
+        let sources = scan_vendor_module_sources(temp.path(), Area::Frontend);
+
+        assert_eq!(sources.len(), 1);
+    }
+
+    // ==================== scan_theme_module_overrides tests ====================
+
+    #[test]
+    fn test_scan_theme_module_overrides_with_modules() {
+        let temp = TempDir::new().unwrap();
+        let theme_path = temp.path().join("theme");
+        let override_path = theme_path.join("Magento_Catalog").join("web");
+        fs::create_dir_all(&override_path).unwrap();
+
+        let theme = Theme {
+            vendor: "Test".to_string(),
+            name: "theme".to_string(),
+            area: Area::Frontend,
+            path: theme_path,
+            parent: None,
+            theme_type: ThemeType::Hyva,
+        };
+
+        let sources = scan_theme_module_overrides(&theme);
+
+        assert_eq!(sources.len(), 1);
+        match &sources[0] {
+            FileSource::ThemeModuleOverride {
+                theme,
+                module,
+                path,
+            } => {
+                assert_eq!(theme, "Test/theme");
+                assert_eq!(module, "Magento_Catalog");
+                assert_eq!(path, &override_path);
+            }
+            _ => panic!("Expected ThemeModuleOverride source"),
+        }
+    }
+
+    #[test]
+    fn test_scan_theme_module_overrides_skips_non_module_dirs() {
+        let temp = TempDir::new().unwrap();
+        let theme_path = temp.path().join("theme");
+
+        // web directory (no underscore)
+        fs::create_dir_all(theme_path.join("web")).unwrap();
+        // media directory (no underscore)
+        fs::create_dir_all(theme_path.join("media")).unwrap();
+
+        let theme = Theme {
+            vendor: "Test".to_string(),
+            name: "theme".to_string(),
+            area: Area::Frontend,
+            path: theme_path,
+            parent: None,
+            theme_type: ThemeType::Hyva,
+        };
+
+        let sources = scan_theme_module_overrides(&theme);
+        assert!(sources.is_empty());
+    }
+
+    #[test]
+    fn test_scan_theme_module_overrides_skips_without_web() {
+        let temp = TempDir::new().unwrap();
+        let theme_path = temp.path().join("theme");
+
+        // Module dir without web subdirectory
+        fs::create_dir_all(theme_path.join("Magento_Catalog").join("templates")).unwrap();
+
+        let theme = Theme {
+            vendor: "Test".to_string(),
+            name: "theme".to_string(),
+            area: Area::Frontend,
+            path: theme_path,
+            parent: None,
+            theme_type: ThemeType::Hyva,
+        };
+
+        let sources = scan_theme_module_overrides(&theme);
+        assert!(sources.is_empty());
+    }
+
+    // ==================== collect_file_sources tests ====================
+
+    #[test]
+    fn test_collect_file_sources_priority_order() {
+        let temp = TempDir::new().unwrap();
+
+        // Create theme with web and module override
+        let theme_path = temp.path().join("theme");
+        fs::create_dir_all(theme_path.join("web")).unwrap();
+        fs::create_dir_all(theme_path.join("Magento_Catalog").join("web")).unwrap();
+
+        // Create lib/web
+        fs::create_dir_all(temp.path().join("lib").join("web")).unwrap();
+
+        let theme = Theme {
+            vendor: "Test".to_string(),
+            name: "theme".to_string(),
+            area: Area::Frontend,
+            path: theme_path,
+            parent: None,
+            theme_type: ThemeType::Hyva,
+        };
+
+        let sources = collect_file_sources(&theme, &[], temp.path());
+
+        // Should have: module override, theme web, library
+        assert_eq!(sources.len(), 3);
+
+        // Verify order: module override first
+        assert!(matches!(
+            &sources[0],
+            FileSource::ThemeModuleOverride { .. }
+        ));
+        assert!(matches!(&sources[1], FileSource::ThemeWeb { .. }));
+        assert!(matches!(&sources[2], FileSource::Library { .. }));
+    }
+
+    #[test]
+    fn test_collect_file_sources_with_parent() {
+        let temp = TempDir::new().unwrap();
+
+        // Child theme
+        let child_path = temp.path().join("child");
+        fs::create_dir_all(child_path.join("web")).unwrap();
+
+        // Parent theme
+        let parent_path = temp.path().join("parent");
+        fs::create_dir_all(parent_path.join("web")).unwrap();
+
+        let child = Theme {
+            vendor: "Test".to_string(),
+            name: "child".to_string(),
+            area: Area::Frontend,
+            path: child_path,
+            parent: Some(ThemeCode::from("Test/parent")),
+            theme_type: ThemeType::Hyva,
+        };
+
+        let parent = Theme {
+            vendor: "Test".to_string(),
+            name: "parent".to_string(),
+            area: Area::Frontend,
+            path: parent_path,
+            parent: None,
+            theme_type: ThemeType::Hyva,
+        };
+
+        let sources = collect_file_sources(&child, &[&parent], temp.path());
+
+        // Child web, then parent web
+        assert_eq!(sources.len(), 2);
+
+        match &sources[0] {
+            FileSource::ThemeWeb { theme, .. } => assert_eq!(theme, "Test/child"),
+            _ => panic!("Expected child ThemeWeb first"),
+        }
+        match &sources[1] {
+            FileSource::ThemeWeb { theme, .. } => assert_eq!(theme, "Test/parent"),
+            _ => panic!("Expected parent ThemeWeb second"),
+        }
+    }
+
+    #[test]
+    fn test_collect_file_sources_empty() {
+        let temp = TempDir::new().unwrap();
+        let theme_path = temp.path().join("theme");
+        fs::create_dir_all(&theme_path).unwrap();
+
+        let theme = Theme {
+            vendor: "Test".to_string(),
+            name: "theme".to_string(),
+            area: Area::Frontend,
+            path: theme_path,
+            parent: None,
+            theme_type: ThemeType::Hyva,
+        };
+
+        let sources = collect_file_sources(&theme, &[], temp.path());
+        assert!(sources.is_empty());
+    }
 }

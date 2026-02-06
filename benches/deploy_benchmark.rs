@@ -69,8 +69,13 @@ fn bench_copy_directory(c: &mut Criterion) {
                 b.iter(|| {
                     let _ = fs::remove_dir_all(&dst);
                     fs::create_dir_all(&dst).unwrap();
-                    copy_directory_with_overrides(black_box(&src), black_box(&dst), &shutdown)
-                        .unwrap()
+                    copy_directory_with_overrides(
+                        black_box(&src),
+                        black_box(&dst),
+                        &shutdown,
+                        false,
+                    )
+                    .unwrap()
                 })
             },
         );

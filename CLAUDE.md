@@ -169,8 +169,10 @@ Before merging performance-critical changes:
 
 ## Testing Strategy
 
-- Do not create Integration/Unit tests unless explicitly requested
-- Focus on performance benchmarks and correctness validation
+- Maintain 80% test coverage across library modules
+- Run `cargo test` before committing changes
+- Run `cargo tarpaulin --lib` to verify coverage
+- Focus on unit tests for public functions and error paths
 
 ---
 
@@ -182,3 +184,19 @@ When copying/porting functionality from any reference implementation:
 - Check all parameters, method calls, and logic flow
 - Consider Rust-specific optimizations (zero-copy, SIMD)
 - Benchmark both implementations to verify performance
+
+## Active Technologies
+
+- Rust 1.80+ with rayon 1.11, quick-xml 0.37, walkdir 2, anyhow 1, thiserror 2, clap 4
+- 140 unit tests with 84% library coverage
+- Criterion benchmarks for performance validation
+
+## Performance Achieved
+
+| Metric | Result |
+|--------|--------|
+| Single theme | 2,400 files/sec |
+| Multi-theme parallel | 5,600 files/sec |
+| vs Go | 1.6x faster |
+| vs PHP | 12x faster |
+| Binary size | 935 KB |

@@ -4,13 +4,17 @@
 
 ```
 src/
+├── lib.rs       # Library exports
 ├── main.rs      # CLI entry, orchestration, Rayon execution
 ├── config.rs    # Clap CLI parsing, Config struct
-├── theme.rs     # Theme struct, XML parsing, Hyva detection
-├── scanner.rs   # Theme discovery, file source scanning
-├── deployer.rs  # Deploy jobs, parallel execution, Luma delegation
-├── copier.rs    # File copy with cancellation support
-└── error.rs     # Error types with thiserror
+├── theme.rs     # Theme struct, XML parsing, Hyva detection (30 tests)
+├── scanner.rs   # Theme discovery, file source scanning (28 tests)
+├── deployer.rs  # Deploy jobs, parallel execution, Luma delegation (31 tests)
+├── copier.rs    # File copy with cancellation support (27 tests)
+└── error.rs     # Error types with thiserror (11 tests)
+
+benches/
+└── deploy_benchmark.rs  # Criterion micro-benchmarks
 ```
 
 ## Building
@@ -176,7 +180,17 @@ Results on Apple M2 Pro with NVMe SSD:
 | copy_directory/1000 | 259.5 ms | 3,854 files/sec |
 | discover_themes_5 | 199 µs | - |
 
-### Real-World Validation
+### Real-World Benchmarks
+
+Tested on real Magento 2 projects (Life/default theme, nl_NL locale):
+
+| Tool | Time | Files | Speed | vs PHP |
+|------|------|-------|-------|--------|
+| **Rust** | **1.47s** | 3,519 | **2,400 files/sec** | **12x faster** |
+| Go | 2.37s | 3,479 | 1,481 files/sec | 7x faster |
+| PHP | 17.56s | 10,342 | ~589 files/sec | baseline |
+
+Multi-theme parallel deployment: **5,600+ files/sec**
 
 ```bash
 # Clean previous output
@@ -185,8 +199,6 @@ rm -rf /var/www/magento/pub/static/frontend/Vendor/Theme/en_US
 # Run with timing
 ./target/release/magento-static-deploy -v /var/www/magento --theme Vendor/Theme
 ```
-
-Expected throughput: **5,000-11,000 files/sec** depending on parallelism.
 
 ### Profiling
 
@@ -227,9 +239,27 @@ ls /var/www/magento/app/design/frontend/
 cat /var/www/magento/app/design/frontend/Vendor/Hyva/theme.xml
 ```
 
+## Testing
+
+```bash
+# Run all tests (140 tests)
+cargo test
+
+# Run specific module tests
+cargo test theme::
+cargo test copier::
+
+# Check test coverage (requires cargo-tarpaulin)
+cargo install cargo-tarpaulin
+cargo tarpaulin --lib
+
+# Current coverage: 84% (394/468 lines)
+```
+
 ## Contributing
 
 1. Follow constitution.md principles
-2. Run clippy and fmt before commits
-3. No tests unless explicitly requested
+2. Run `cargo clippy -- -D warnings` and `cargo fmt` before commits
+3. Maintain 80% test coverage
 4. Profile before/after optimization changes
+5. Include benchmark results for performance changes

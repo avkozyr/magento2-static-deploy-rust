@@ -1,19 +1,17 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: N/A (template) → 1.0.0 (initial)
-Modified principles: N/A (first instantiation)
+Version change: 1.0.0 → 1.1.0 (MINOR)
+Modified principles:
+  - Removed "MUST NOT create tests" from Development Workflow
 Added sections:
-  - 5 Core Principles (Performance, Memory Safety, Concurrency, Zero-Copy, Benchmarking)
-  - Performance Standards
-  - Development Workflow
-  - Governance
+  - Testing Standards (80% coverage requirement)
 Removed sections: N/A
 Templates requiring updates:
-  - .specify/templates/plan-template.md ✅ (Constitution Check section compatible)
+  - .specify/templates/plan-template.md ✅ (no changes needed)
   - .specify/templates/spec-template.md ✅ (no changes needed)
   - .specify/templates/tasks-template.md ✅ (no changes needed)
-Follow-up TODOs: None
+Follow-up TODOs: Add tests to reach 80% coverage target
 -->
 
 # Magento 2 Static Deploy Rust Constitution
@@ -118,7 +116,14 @@ strip = true
 - MUST profile before and after optimization work
 - MUST document performance tradeoffs in commit messages
 - MUST ask for clarification before implementing unclear requirements
-- MUST NOT create tests unless explicitly requested
+
+## Testing Standards
+
+- MUST maintain minimum 80% test coverage across all modules
+- MUST write unit tests for all public functions and types
+- MUST test error paths and edge cases, not just happy paths
+- MUST run `cargo tarpaulin` to verify coverage before merging
+- SHOULD use property-based testing for parsing and validation logic
 
 ## Governance
 
@@ -139,4 +144,4 @@ MUST verify compliance with these principles.
 - Violations MUST be justified in Complexity Tracking table
 - See `CLAUDE.md` for runtime development guidance
 
-**Version**: 1.0.0 | **Ratified**: 2025-02-05 | **Last Amended**: 2025-02-05
+**Version**: 1.1.0 | **Ratified**: 2025-02-05 | **Last Amended**: 2026-02-06

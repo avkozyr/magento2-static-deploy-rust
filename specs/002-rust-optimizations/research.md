@@ -1,155 +1,210 @@
 # Research: Rust Performance Optimizations
 
 **Feature**: 002-rust-optimizations
-**Date**: 2025-02-05
+**Date**: 2026-02-05
 
-## Technology Decisions
+## Overview
 
-### 1. Path Construction Optimization
+Research findings for 12 high-impact Rust optimizations targeting the Magento 2 static deploy tool.
 
-**Decision**: Use `PathBuf::join()` chain instead of `format!()`
+---
 
-**Rationale**:
-- `format!()` allocates a new String on each call
-- `PathBuf::join()` uses efficient path concatenation without intermediate strings
-- Zero heap allocations for path construction in hot loops
+## 1. Path Joining vs String Formatting (FR-001)
 
-**Alternatives Considered**:
-- `String::with_capacity()` + push_str: Still allocates, just pre-sized
-- `Cow<Path>`: Adds complexity without significant benefit
-
-### 2. Inline Hints for Accessors
-
-**Decision**: Add `#[inline]` to small accessor methods
+**Decision**: Use `Path::join()` instead of `format!()` for path construction
 
 **Rationale**:
-- Accessor methods like `as_str()` are called in every file operation
-- `#[inline]` hint allows cross-crate inlining
-- Compiler already inlines within crate, but explicit hints help benchmarks
+- `format!()` allocates a new String on every call
+- `Path::join()` returns PathBuf with platform-aware separators
+- In hot loops, avoiding format allocations reduces heap pressure significantly
 
 **Alternatives Considered**:
-- `#[inline(always)]`: Too aggressive, may bloat code
-- No hint: Works within crate but not for library users
+- `format!()` - Rejected: allocates on every call
+- `concat!()` - Not applicable: compile-time only, requires literals
 
-### 3. XML Parsing Zero-Copy
+---
 
-**Decision**: Use `quick-xml`'s `unescape_value()` API
+## 2. Inline Hints for Hot Methods (FR-002)
+
+**Decision**: Add `#[inline]` to frequently-called accessor methods
 
 **Rationale**:
-- `to_vec()` copies attribute bytes into new Vec
-- `unescape_value()` returns Cow<str>, only allocating if escape sequences present
-- Most XML attributes have no escapes, so zero-copy in practice
+- Small methods benefit from inlining to avoid function call overhead
+- Compiler may not inline across crate boundaries without hints
+- Accessors like `as_str()`, `vendor()`, `name()` are called in hot loops
 
 **Alternatives Considered**:
-- `roxmltree`: DOM-based, higher memory usage
-- `serde_xml_rs`: Convenient but more allocations
+- `#[inline(always)]` - Rejected: too aggressive, can bloat binary
+- No annotation - Current: relies on compiler heuristics
 
-### 4. Rayon Thread Pool Configuration
+---
 
-**Decision**: Configure `num_threads = num_cpus::get() * 2` for I/O-bound work
+## 3. Zero-Copy XML Parsing (FR-003)
+
+**Decision**: Use quick-xml's zero-copy reader with borrowed slices
 
 **Rationale**:
-- File operations are I/O-bound, not CPU-bound
-- More threads than cores allows overlap during I/O waits
-- 2× multiplier is common for I/O-heavy workloads
+- quick-xml supports `&[u8]` slices without allocation
+- Theme XML files are small (<1KB typically)
+- Memory-mapping + zero-copy parsing eliminates all read allocations
 
 **Alternatives Considered**:
-- Default (num_cpus): Under-utilizes I/O capacity
-- 4× multiplier: Diminishing returns, more context switches
+- `read_to_string()` + parse - Rejected: allocates string buffer
+- serde_xml - Rejected: requires owned types, more allocations
 
-### 5. Progress Bar Batching
+---
 
-**Decision**: Thread-local counters with periodic atomic flush
+## 4. Thread Pool Configuration (FR-004)
+
+**Decision**: Configure Rayon thread pool size based on workload characteristics
 
 **Rationale**:
-- Per-file atomic updates cause cache line contention
-- Thread-local accumulation + batch flush reduces atomic operations 100×
-- Batch size of 100 files balances accuracy vs overhead
+- Default Rayon uses num_cpus which may not be optimal for I/O-bound work
+- File copying is I/O-bound; more threads can hide latency
+- Configurable via `RAYON_NUM_THREADS` or explicit pool
 
 **Alternatives Considered**:
-- Per-thread progress bars: Complex UI, more overhead
-- No progress: Poor user experience
+- Fixed thread count - Rejected: not portable across machines
+- Async I/O (Tokio) - Rejected: adds complexity, Rayon sufficient for file copying
 
-### 6. Buffer Size for File Copy
+---
 
-**Decision**: Increase buffer to 256KB
+## 5. Borrowing Over Arc (FR-005)
+
+**Decision**: Use `&T` references instead of `Arc<T>` when ownership not required
 
 **Rationale**:
-- Modern SSDs perform better with larger sequential reads/writes
-- 256KB aligns well with typical SSD page sizes
-- Typical Magento static files are < 100KB, so single-read common
+- `Arc::clone()` involves atomic increment (memory barrier)
+- References have zero runtime cost
+- Theme data is read-only during deployment
 
 **Alternatives Considered**:
-- 64KB (current): Suboptimal for modern storage
-- 1MB: Diminishing returns, more memory per thread
+- `Rc` - Rejected: not thread-safe for Rayon
+- `Arc` everywhere - Current: unnecessary overhead for read-only data
 
-### 7. Test Coverage Tool
+---
 
-**Decision**: Use `cargo-tarpaulin` for coverage measurement
+## 6. Pre-allocation (FR-006)
+
+**Decision**: Use `Vec::with_capacity()` when size is known or estimable
 
 **Rationale**:
-- Well-maintained, widely used in Rust ecosystem
-- Supports line and branch coverage
-- Integrates with CI systems
-- Faster than `llvm-cov` for typical projects
+- Growing Vec doubles capacity, causing reallocation + copy
+- Theme discovery knows approximate file count from directory traversal
+- Pre-allocation eliminates intermediate allocations
 
 **Alternatives Considered**:
-- `llvm-cov`: More accurate but complex setup
-- `grcov`: Requires nightly compiler features
-- `kcov`: Linux-only, slower
+- Default Vec::new() - Current: causes multiple reallocations
+- Fixed-size arrays - Not applicable: size unknown at compile time
 
-### 8. Locale Validation
+---
 
-**Decision**: Validate format with `is_valid_format()` method returning bool
+## 7. Derive Eq/Hash for Core Types (FR-007)
+
+**Decision**: Add `#[derive(Eq, PartialEq, Hash)]` to ThemeCode, LocaleCode
 
 **Rationale**:
-- Simple regex-free validation: split on '_', check part lengths
-- Non-blocking validation (warn, don't error) for maximum compatibility
-- Magento supports many locale formats beyond strict ISO
+- Enables use in HashSet/HashMap for deduplication
+- Enables equality comparison in tests
+- Zero runtime cost (compiler-generated)
 
 **Alternatives Considered**:
-- Strict validation with Result: May break valid Magento setups
-- No validation: Loses opportunity to catch typos early
+- Manual impl - Rejected: error-prone, no benefit
+- No Eq - Current: limits usability
 
-## Performance Baseline
+---
 
-Current metrics (from 001-rust-port validation):
-- Throughput: ~10,800 files/second
-- Binary size: 919KB
-- Memory: Not profiled
+## 8. Error Context Enhancement (FR-008)
 
-Target improvements:
-- Throughput: 13,500+ files/second (25% improvement)
-- Memory: 20% reduction in allocations
-- Binary size: Minimal impact expected
+**Decision**: Include source path, destination path, and operation in all errors
 
-## Test Coverage Strategy
+**Rationale**:
+- Failed file copies are common (permissions, disk full)
+- Without paths, debugging requires manual investigation
+- anyhow's `.context()` adds zero-cost context chain
 
-### Unit Test Targets
+**Alternatives Considered**:
+- Log-only - Rejected: errors may not reach logs
+- Custom error types - More work, anyhow sufficient
 
-| Module | Functions to Test | Edge Cases |
-|--------|-------------------|------------|
-| theme.rs | ThemeCode::new/parse, LocaleCode::new, parse_theme_xml, detect_theme_type | Invalid format, empty strings, malformed XML |
-| scanner.rs | discover_themes, scan_*_sources, collect_file_sources | Missing directories, symlinks, permission errors |
-| deployer.rs | job_matrix, deploy_theme, output_path_for_theme | Empty themes, cancellation mid-deploy |
-| copier.rs | copy_file, copy_directory_with_overrides | Large files, disk full, read-only dest |
-| config.rs | Config::from_cli | Missing args, invalid values |
-| error.rs | Error Display implementations | All error variants |
+---
 
-### Integration Test Targets
+## 9. Progress Bar Batching (FR-009)
 
-| Scenario | Description |
-|----------|-------------|
-| Single theme deploy | Deploy one Hyva theme to verify correctness |
-| Multi-theme deploy | Deploy multiple themes in parallel |
-| Cancellation | Verify graceful shutdown on SIGINT |
-| Error recovery | Verify partial failure doesn't corrupt output |
+**Decision**: Batch progress updates to reduce atomic operation overhead
 
-## Dependencies
+**Rationale**:
+- indicatif uses AtomicU64 internally
+- Updating per-file causes cache line contention
+- Batching (e.g., every 100 files) reduces overhead significantly
 
-No new production dependencies required.
+**Alternatives Considered**:
+- Per-file updates - Current: high contention
+- No progress - Rejected: poor UX for long operations
 
-**Dev dependencies to add**:
-- `cargo-tarpaulin`: Coverage measurement
-- `tempfile`: Already present for tests
-- `proptest` (optional): Property-based testing for edge cases
+---
+
+## 10. Locale Code Validation (FR-010)
+
+**Decision**: Validate locale format (xx_YY) at input boundary
+
+**Rationale**:
+- Invalid locales cause silent failures or wrong directory creation
+- Early validation provides clear error messages
+- Regex or manual parsing both efficient for simple pattern
+
+**Alternatives Considered**:
+- No validation - Current: fails silently
+- Full i18n library - Overkill for format check
+
+---
+
+## 11. Buffer Size Optimization (FR-011)
+
+**Decision**: Use 64KB buffer for file copying (optimal for modern NVMe)
+
+**Rationale**:
+- Default std::fs::copy uses 8KB buffer
+- Modern NVMe SSDs have 4KB pages, benefit from larger transfers
+- 64KB balances memory use vs I/O efficiency
+
+**Alternatives Considered**:
+- 8KB (default) - Current: suboptimal for NVMe
+- 1MB - Excessive memory use with many parallel copies
+- Memory-mapped copy - Complex, minimal benefit for typical file sizes
+
+---
+
+## 12. Documentation Comments (FR-012)
+
+**Decision**: Add `///` doc comments to all public types and functions
+
+**Rationale**:
+- Enables `cargo doc` generation
+- IDE support for inline documentation
+- Required for library consumers
+
+**Alternatives Considered**:
+- README only - Rejected: not accessible from code
+- `//` comments - Rejected: not extracted by rustdoc
+
+---
+
+## Summary
+
+All 12 optimizations researched with clear decisions and implementation patterns. No NEEDS CLARIFICATION items remaining.
+
+| Optimization | Impact | Complexity | Priority |
+|--------------|--------|------------|----------|
+| Path joining (FR-001) | High | Low | P1 |
+| Inline hints (FR-002) | Medium | Low | P2 |
+| Zero-copy XML (FR-003) | Medium | Medium | P2 |
+| Thread pool config (FR-004) | Medium | Low | P2 |
+| Borrowing over Arc (FR-005) | High | Medium | P1 |
+| Pre-allocation (FR-006) | High | Low | P1 |
+| Derive Eq/Hash (FR-007) | Low | Low | P3 |
+| Error context (FR-008) | Medium | Low | P2 |
+| Progress batching (FR-009) | Medium | Low | P2 |
+| Locale validation (FR-010) | Low | Low | P3 |
+| Buffer size (FR-011) | Medium | Low | P2 |
+| Documentation (FR-012) | Low | Medium | P3 |

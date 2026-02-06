@@ -1,139 +1,159 @@
 # Data Model: Rust Performance Optimizations
 
 **Feature**: 002-rust-optimizations
-**Date**: 2025-02-05
+**Date**: 2026-02-05
 
-## Core Entities
+## Overview
+
+Core entities for the Magento 2 static deploy tool. This feature enhances existing types with traits and validation.
+
+---
+
+## Entities
 
 ### ThemeCode
 
 Represents a Magento theme identifier in "Vendor/name" format.
 
-**Fields**:
 | Field | Type | Description |
 |-------|------|-------------|
-| inner | Arc<str> | Shared string reference for zero-copy cloning |
+| inner | `String` | Full theme code (e.g., "Hyva/default") |
 
-**Derives** (to add):
-- `PartialEq`, `Eq`: Value equality comparison
-- `Hash`: Use in HashMaps/HashSets
-- `Clone`: Already present
+**Derived Traits** (FR-007):
+- `Debug`, `Clone`, `Eq`, `PartialEq`, `Hash`
 
 **Methods**:
-| Method | Signature | Inline | Description |
-|--------|-----------|--------|-------------|
-| new | (vendor: &str, name: &str) -> Self | Yes | Construct from parts |
-| parse | (s: &str) -> Option<Self> | Yes | Parse "Vendor/name" format |
-| as_str | (&self) -> &str | Yes | Get inner string |
-| vendor | (&self) -> &str | Yes | Extract vendor part |
-| name | (&self) -> &str | Yes | Extract name part |
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `new` | `fn new(code: &str) -> Result<Self>` | Validates and creates ThemeCode |
+| `vendor` | `fn vendor(&self) -> &str` | Returns vendor part (before `/`) |
+| `name` | `fn name(&self) -> &str` | Returns theme name (after `/`) |
+| `as_str` | `#[inline] fn as_str(&self) -> &str` | Returns full code (FR-002) |
+
+**Validation**:
+- Must contain exactly one `/`
+- Both vendor and name must be non-empty
+- Invalid format returns descriptive error (FR-008)
+
+---
 
 ### LocaleCode
 
-Represents a locale identifier in "xx_YY" format.
+Represents a locale identifier in "xx_YY" format (ISO 639-1 + ISO 3166-1).
 
-**Fields**:
 | Field | Type | Description |
 |-------|------|-------------|
-| inner | Arc<str> | Shared string reference for zero-copy cloning |
+| inner | `String` | Locale code (e.g., "en_US") |
 
-**Derives** (to add):
-- `PartialEq`, `Eq`: Value equality comparison
-- `Hash`: Use in HashMaps/HashSets
-- `Clone`: Already present
+**Derived Traits** (FR-007):
+- `Debug`, `Clone`, `Eq`, `PartialEq`, `Hash`
 
 **Methods**:
-| Method | Signature | Inline | Description |
-|--------|-----------|--------|-------------|
-| new | (s: &str) -> Self | Yes | Construct from string |
-| as_str | (&self) -> &str | Yes | Get inner string |
-| is_valid_format | (&self) -> bool | Yes | Check xx_YY format |
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `new` | `fn new(code: &str) -> Result<Self>` | Validates format (FR-010) |
+| `as_str` | `#[inline] fn as_str(&self) -> &str` | Returns code string (FR-002) |
 
-### Theme
+**Validation** (FR-010):
+- Must be exactly 5 characters
+- Format: `[a-z]{2}_[A-Z]{2}`
+- Examples: `en_US`, `nl_NL`, `de_DE`
+- Invalid format returns: `"invalid locale format 'xxx': expected xx_YY (e.g., en_US)"`
 
-Represents a Magento theme with metadata.
-
-**Fields**:
-| Field | Type | Description |
-|-------|------|-------------|
-| vendor | String | Vendor name (e.g., "Hyva") |
-| name | String | Theme name (e.g., "default") |
-| area | Area | Frontend or Adminhtml |
-| path | PathBuf | Filesystem path to theme |
-| parent | Option<ThemeCode> | Parent theme in inheritance |
-| theme_type | ThemeType | Hyva or Luma |
-
-**Derives** (to add):
-- `PartialEq`, `Eq`: Theme comparison for tests
+---
 
 ### DeployJob
 
-Combines theme and locale for deployment.
+Combines theme and locale for parallel deployment execution.
 
-**Fields**:
 | Field | Type | Description |
 |-------|------|-------------|
-| theme | Arc<Theme> | Shared theme reference |
-| locale | LocaleCode | Locale to deploy |
+| theme | `ThemeCode` | Target theme |
+| locale | `LocaleCode` | Target locale |
+| area | `Area` | frontend or adminhtml |
 
-**Optimization**: Pass by reference (`&DeployJob`) rather than cloning.
+**Derived Traits**:
+- `Debug`, `Clone`
+
+---
 
 ### DeployStats
 
-Atomic counters for progress tracking.
+Tracks deployment progress with atomic counters.
 
-**Fields**:
 | Field | Type | Description |
 |-------|------|-------------|
-| files_copied | CacheAlignedAtomic | Total files copied |
-| bytes_copied | CacheAlignedAtomic | Total bytes copied |
-| errors | CacheAlignedAtomic | Error count |
+| files_copied | `AtomicU64` | Total files copied |
+| bytes_copied | `AtomicU64` | Total bytes copied |
+| errors | `AtomicU64` | Error count |
 
-**Optimization**: Batch updates with thread-local counters.
+**Concurrency** (FR-009):
+- Uses `Ordering::Relaxed` for counter increments
+- Progress bar updates batched every 100 files
 
-### Error Types
+---
 
-Enhanced error variants with full context.
+### Theme
 
-**CopyFailed** (updated):
+Represents a discovered Magento theme with parent chain.
+
 | Field | Type | Description |
 |-------|------|-------------|
-| src | PathBuf | Source file path |
-| dst | PathBuf | Destination file path |
-| source | std::io::Error | Underlying I/O error |
+| code | `ThemeCode` | Theme identifier |
+| path | `PathBuf` | Filesystem path |
+| parent | `Option<ThemeCode>` | Parent theme (if any) |
+| area | `Area` | frontend or adminhtml |
+
+**Derived Traits**:
+- `Debug`, `Clone`
+
+---
+
+### Area
+
+Enum for Magento design areas.
+
+| Variant | Value |
+|---------|-------|
+| Frontend | `"frontend"` |
+| Adminhtml | `"adminhtml"` |
+
+**Derived Traits**:
+- `Debug`, `Clone`, `Copy`, `Eq`, `PartialEq`
+
+---
 
 ## Relationships
 
-```text
-Theme 1 ──────< 0..1 ThemeCode (parent)
-Theme 1 ──────< * DeployJob
-DeployJob 1 ──── 1 LocaleCode
-DeployStats ────< * DeployJob (shared across all)
 ```
+DeployJob
+    ├── ThemeCode (1:1)
+    ├── LocaleCode (1:1)
+    └── Area (1:1)
+
+Theme
+    ├── ThemeCode (1:1)
+    ├── Area (1:1)
+    └── parent → ThemeCode (0..1)
+
+DeployStats
+    └── (standalone, shared across threads via Arc)
+```
+
+---
 
 ## State Transitions
 
-### DeployJob Lifecycle
+### Deployment Lifecycle
 
-```text
-Created → Running → Completed
-                  → Failed
-                  → Cancelled
+```
+[Idle] → discover_themes() → [Themes Discovered]
+    ↓
+[Themes Discovered] → create_jobs() → [Jobs Queued]
+    ↓
+[Jobs Queued] → rayon::par_iter() → [Deploying]
+    ↓
+[Deploying] → complete/error → [Done]
 ```
 
-### File Copy Lifecycle
-
-```text
-Pending → Copying → Copied
-                  → Failed (retry not implemented)
-                  → Skipped (target newer)
-```
-
-## Validation Rules
-
-| Entity | Rule | Enforcement |
-|--------|------|-------------|
-| ThemeCode | Must contain exactly one '/' | parse() returns None |
-| LocaleCode | Should match xx_YY pattern | is_valid_format() warns |
-| Theme | Must have valid theme.xml | discover_themes skips |
-| DeployJob | Theme must exist | job_matrix validates |
+No persistent state; all state is runtime-only.

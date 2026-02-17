@@ -195,7 +195,7 @@ impl Theme {
 /// Parse parent theme from theme.xml content
 pub fn parse_theme_xml(xml: &str) -> Option<ThemeCode> {
     let mut reader = Reader::from_str(xml);
-    reader.trim_text(true);
+    reader.config_mut().trim_text(true);
     let mut in_parent = false;
 
     loop {

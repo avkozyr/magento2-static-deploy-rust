@@ -14,6 +14,18 @@ use walkdir::WalkDir;
 use crate::error::DeployError;
 use crate::theme::{detect_theme_type, parse_theme_xml, Area, Theme};
 
+/// Validate that a path component is safe (no path traversal)
+/// Returns true if the component is safe to use in path construction
+#[inline]
+fn is_safe_path_component(s: &str) -> bool {
+    !s.is_empty()
+        && !s.contains('/')
+        && !s.contains('\\')
+        && !s.contains('\0')
+        && s != ".."
+        && s != "."
+}
+
 /// Read module name from etc/module.xml
 fn get_module_name(package_path: &Path) -> Option<String> {
     // Try etc/module.xml first
@@ -33,7 +45,7 @@ fn get_module_name(package_path: &Path) -> Option<String> {
 /// Parse module name from module.xml content
 fn parse_module_xml(xml: &str) -> Option<String> {
     let mut reader = Reader::from_str(xml);
-    reader.trim_text(true);
+    reader.config_mut().trim_text(true);
 
     loop {
         match reader.read_event() {
@@ -91,6 +103,11 @@ pub fn discover_themes(magento_root: &Path, area: Area) -> Result<Vec<Theme>, De
             let vendor_path = vendor_entry.path();
             let vendor = vendor_entry.file_name().to_string_lossy().to_string();
 
+            // Validate vendor name for path traversal safety
+            if !is_safe_path_component(&vendor) {
+                return Vec::new();
+            }
+
             // Collect theme dirs for this vendor
             let theme_dirs: Vec<_> = fs::read_dir(&vendor_path)
                 .ok()
@@ -111,6 +128,11 @@ pub fn discover_themes(magento_root: &Path, area: Area) -> Result<Vec<Theme>, De
                     }
 
                     let name = theme_entry.file_name().to_string_lossy().to_string();
+
+                    // Validate theme name for path traversal safety
+                    if !is_safe_path_component(&name) {
+                        return None;
+                    }
 
                     // Parse theme.xml for parent
                     let xml_content = fs::read_to_string(&theme_xml_path).ok()?;

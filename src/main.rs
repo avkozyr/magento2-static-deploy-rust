@@ -51,10 +51,15 @@ fn run() -> Result<ExitCode> {
     .context("Failed to set Ctrl+C handler")?;
 
     // Configure Rayon thread pool
-    rayon::ThreadPoolBuilder::new()
+    if let Err(e) = rayon::ThreadPoolBuilder::new()
         .num_threads(config.jobs)
         .build_global()
-        .ok();
+    {
+        eprintln!(
+            "Warning: failed to set thread pool size to {}: {e}",
+            config.jobs
+        );
+    }
 
     // Discover themes
     let mut all_themes: Vec<Theme> = Vec::new();
